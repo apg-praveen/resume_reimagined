@@ -1,20 +1,11 @@
 import os
 import re
 import fitz
-import joblib
-import torch
 import tempfile
 import pandas as pd
 import streamlit as st
 import google.generativeai as genai
 import kagglehub
-import requests
-from transformers import BertTokenizer, BertForSequenceClassification
-from sentence_transformers import SentenceTransformer
-from sklearn.model_selection import train_test_split
-from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
 
 # ✅ Streamlit configuration (Mason colors + dark mode)
 st.set_page_config(page_title="AI Career Navigator", page_icon="🎓", layout="wide")
@@ -47,37 +38,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ✅ Environment keys
-os.environ["GOOGLE_API_KEY"] = "AIzaSyC_16LQ2WnnHYhDF5W3DHZgIlVPEA5F4Po"
+os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 os.environ["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-# ✅ Caching setup
-@st.cache_resource(show_spinner="🔄 Loading embedding model...")
-def load_embedding_model():
-    return SentenceTransformer("paraphrase-MiniLM-L3-v2")
-
-@st.cache_resource(show_spinner="🔄 Loading trained ML model...")
-def load_trained_model():
-    return joblib.load('career_advice_model.pkl')
-
-@st.cache_resource(show_spinner="🔄 Loading BERT model and tokenizer...")
-def load_bert_model_and_tokenizer():
-    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-    model = BertForSequenceClassification.from_pretrained("bert-base-uncased")
-    model.eval()
-    return tokenizer, model
-
-@st.cache_data(show_spinner="📥 Loading resume dataset...")
-def load_resume_data(csv_path):
-    df = pd.read_csv(csv_path, usecols=["Resume_str", "Category"])
-    df = df[df['Category'].isin(['INFORMATION-TECHNOLOGY', 'BUSINESS-DEVELOPMENT'])]
-    df['Job_Title'] = df['Resume_str'].str[:50].str.strip()
-    df = df.dropna(subset=['Job_Title'])
-    return df
-
-@st.cache_data(show_spinner="🧠 Generating embeddings...")
-def get_embeddings(_model, texts):
-    return _model.encode(texts, show_progress_bar=False, batch_size=32)
 
 # ✅ PDF text extraction
 def extract_text_from_pdf(uploaded_file):
@@ -91,45 +54,31 @@ def extract_text_from_pdf(uploaded_file):
         st.error(f"❌ Error extracting text from PDF: {e}")
         return ""
 
-# ✅ Train model if needed
-def train_ml_model():
-    texts = df_csv["Resume_str"].values
-    labels = df_csv["Category"].values
-    X_train, X_test, y_train, y_test = train_test_split(texts, labels, test_size=0.2, random_state=42)
-    embedding_model = load_embedding_model()
-    X_train_embeddings = get_embeddings(embedding_model, X_train)
-    X_test_embeddings = get_embeddings(embedding_model, X_test)
-    models = {"SVM": SVC(kernel='linear', probability=True), "Random Forest": RandomForestClassifier(n_estimators=200)}
-    best_model, best_accuracy = None, 0
-    for name, model in models.items():
-        model.fit(X_train_embeddings, y_train)
-        y_pred = model.predict(X_test_embeddings)
-        acc = accuracy_score(y_test, y_pred)
-        print(f"{name} Accuracy: {acc:.2f}")
-        if acc > best_accuracy:
-            best_accuracy, best_model = acc, model
-    joblib.dump(best_model, 'career_advice_model.pkl')
-    print(f"✅ Model trained and saved with accuracy: {best_accuracy:.2f}")
-
-# ✅ Load dataset
-path = kagglehub.dataset_download("snehaanbhawal/resume-dataset")
-csv_file_path = path + "/Resume/Resume.csv"
-df_csv = load_resume_data(csv_file_path)
-
-if not os.path.exists("career_advice_model.pkl"):
-    with st.spinner("🛠️ Training model (first run only)..."):
-        train_ml_model()
-
-embedding_model = load_embedding_model()
-model = load_trained_model()
-bert_tokenizer, bert_model = load_bert_model_and_tokenizer()
-
-# ✅ Predict category
+# ✅ Gemini category prediction
 def predict_job_category(resume_text):
-    text_embedding = embedding_model.encode([resume_text], show_progress_bar=False)
-    return model.predict(text_embedding)[0]
+    prompt = f"""
+    Classify the following resume as either INFORMATION-TECHNOLOGY or BUSINESS-DEVELOPMENT.
+    Only return one of the two labels.
 
-# ✅ Gemini output
+    Resume:
+    {resume_text[:1500]}
+    """
+    try:
+        model = genai.GenerativeModel("models/gemini-1.5-pro-latest")
+        response = model.generate_content(prompt)
+        result = response.text.strip().upper()
+
+        if "INFORMATION" in result:
+            return "INFORMATION-TECHNOLOGY"
+        elif "BUSINESS" in result:
+            return "BUSINESS-DEVELOPMENT"
+        else:
+            return "UNKNOWN"
+    except Exception as e:
+        st.error(f"Gemini classification failed: {e}")
+        return "UNKNOWN"
+
+# ✅ Gemini AI response
 def get_ai_response(user_input, resume_text, job_category):
     prompt = f"""
     Act as a career coach. Based on this resume and category '{job_category}', answer:
@@ -147,22 +96,16 @@ def get_ai_response(user_input, resume_text, job_category):
     Next Heading
     • Bullet 1
     """
-
     try:
-        model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
+        model = genai.GenerativeModel("models/gemini-1.5-pro-latest")
         response = model.generate_content(prompt)
-
         if not response or not response.text:
             return "⚠️ No response generated."
 
-        # ✅ Basic string cleanup
         text = response.text
-        text = text.replace("**", "")
-        text = text.replace("- ", "• ")
-        text = text.strip()
+        text = text.replace("**", "").replace("- ", "• ").strip()
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         return "\n".join(lines)
-
     except Exception as e:
         return f"⚠️ Gemini API error: {str(e)}"
 
