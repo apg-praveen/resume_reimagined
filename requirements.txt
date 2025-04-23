@@ -2,7 +2,7 @@ streamlit
 google-generativeai
 langchain-google-genai
 langchain-community
-pymupdf
+PyMuPDF==1.23.7
 kagglehub
 emoji
 pandas
