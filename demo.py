@@ -38,7 +38,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ✅ Gemini API key setup
-os.environ["GOOGLE_API_KEY"] = "AIzaSyBHeirb_J5_EFU6Itzy49j93xAQ__aiFnM"
+# os.environ["GOOGLE_API_KEY"] = "AIzaSyBHeirb_J5_EFU6Itzy49j93xAQ__aiFnM"
+os.environ["GOOGLE_API_KEY"] = "AIzaSyC_16LQ2WnnHYhDF5W3DHZgIlVPEA5F4Po"
 os.environ["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
